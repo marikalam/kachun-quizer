@@ -49,6 +49,24 @@ body {
 .brand-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+}
+
+.games-link-btn {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  padding: 9px 16px;
+  border-radius: 999px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink-dim);
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
   justify-content: center;
 }
 

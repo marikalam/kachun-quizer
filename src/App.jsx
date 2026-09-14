@@ -1,16 +1,6 @@
 import { useRef, useState } from 'react';
-
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const [, data] = reader.result.split(',');
-      resolve(data);
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
+import { recognizeText } from './ocr.js';
+import { generateQuizFromText } from './quizFromText.js';
 
 function ProgressDots({ current, total }) {
   const items = [];
@@ -34,9 +24,10 @@ export default function App() {
   const fileInputRef = useRef(null);
 
   const [view, setView] = useState('capture');
+  const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
-  const [imagePayload, setImagePayload] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [ocrProgress, setOcrProgress] = useState(0);
 
   const [quiz, setQuiz] = useState(null);
   const [questionIndex, setQuestionIndex] = useState(0);
@@ -45,45 +36,42 @@ export default function App() {
 
   function resetAll() {
     setView('capture');
+    setImageFile(null);
     setImagePreview(null);
-    setImagePayload(null);
     setErrorMsg(null);
+    setOcrProgress(0);
     setQuiz(null);
     setQuestionIndex(0);
     setSelectedIndex(null);
     setScore(0);
   }
 
-  async function handleFileChange(e) {
+  function handleFileChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const data = await fileToBase64(file);
-    setImagePayload({ image: data, mediaType: file.type || 'image/jpeg' });
+    setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
     setErrorMsg(null);
   }
 
   async function generateQuiz() {
-    if (!imagePayload) return;
+    if (!imageFile) return;
     setView('generating');
     setErrorMsg(null);
+    setOcrProgress(0);
     try {
-      const res = await fetch('/api/quiz', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(imagePayload),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Something went wrong generating the quiz.');
+      const text = await recognizeText(imageFile, setOcrProgress);
+      const generated = generateQuizFromText(text);
+      if (!generated) {
+        throw new Error("Couldn't find enough legible notes in that photo. Try better lighting or a closer shot.");
       }
-      setQuiz(data);
+      setQuiz(generated);
       setQuestionIndex(0);
       setSelectedIndex(null);
       setScore(0);
       setView('quiz');
     } catch (err) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || 'Something went wrong reading that photo.');
       setView('capture');
     }
   }
@@ -122,6 +110,9 @@ export default function App() {
             <span className="pop-red">e</span>
             <span className="pop-green">r</span>
           </h1>
+          <a className="games-link-btn" href="https://marikalam.github.io/apps/">
+            Apps
+          </a>
         </div>
 
         {view === 'capture' && (
@@ -167,7 +158,7 @@ export default function App() {
           <div className="complete-wrap">
             <div className="spinner" aria-hidden="true" />
             <h2 className="screen-title">Reading your notes…</h2>
-            <p className="screen-sub">Kachun is writing your quiz</p>
+            <p className="screen-sub">{Math.round(ocrProgress * 100)}%</p>
           </div>
         )}
 

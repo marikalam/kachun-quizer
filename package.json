@@ -1,25 +1,24 @@
 {
   "name": "kachun-quizer",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
+  "homepage": "https://marikalam.github.io/apps/kachun-quizer",
   "scripts": {
-    "dev": "concurrently -n web,api -c blue,green \"vite\" \"node server/index.js\"",
-    "server": "node server/index.js",
+    "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d dist -r https://github.com/marikalam/apps.git -b gh-pages -e kachun-quizer --add"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.68.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.5",
-    "express": "^4.21.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",
-    "concurrently": "^9.1.2",
+    "gh-pages": "^6.3.0",
     "vite": "^5.4.21"
   }
 }
