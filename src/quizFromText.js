@@ -1,6 +1,9 @@
 import nlp from 'compromise';
 
 const POS_CATEGORIES = ['Noun', 'Verb', 'Adjective', 'Adverb'];
+// Lower number = picked first as a blank. Nouns/verbs tend to be the fact
+// being tested; adjectives/adverbs are usually just describing it.
+const CATEGORY_PRIORITY = { Noun: 0, Verb: 1, Adjective: 2, Adverb: 3 };
 const TARGET_QUESTIONS = 10;
 const MIN_QUESTIONS = 10;
 
@@ -48,9 +51,11 @@ export function generateQuizFromText(rawText) {
     .filter((s) => s.candidates.length > 0);
 
   const pools = { Noun: new Map(), Verb: new Map(), Adjective: new Map(), Adverb: new Map() };
+  const wordFrequency = new Map();
   for (const { candidates } of sentences) {
     for (const c of candidates) {
       if (!pools[c.category].has(c.normal)) pools[c.category].set(c.normal, c.text);
+      wordFrequency.set(c.normal, (wordFrequency.get(c.normal) || 0) + 1);
     }
   }
   const totalPoolSize = Object.values(pools).reduce((n, m) => n + m.size, 0);
@@ -62,9 +67,16 @@ export function generateQuizFromText(rawText) {
   const usedAnswers = new Set();
 
   function buildQuestion(sentenceText, candidates, allowCrossCategory) {
-    const available = shuffle(candidates.filter((c) => !usedAnswers.has(c.normal))).sort(
-      (a, b) => b.text.length - a.text.length,
-    );
+    // Prefer nouns/verbs (the fact) over adjectives/adverbs (the description),
+    // then words that recur across the notes (a sign they're a key term),
+    // then longer words as a last tiebreak.
+    const available = shuffle(candidates.filter((c) => !usedAnswers.has(c.normal))).sort((a, b) => {
+      const categoryDiff = CATEGORY_PRIORITY[a.category] - CATEGORY_PRIORITY[b.category];
+      if (categoryDiff !== 0) return categoryDiff;
+      const frequencyDiff = (wordFrequency.get(b.normal) || 0) - (wordFrequency.get(a.normal) || 0);
+      if (frequencyDiff !== 0) return frequencyDiff;
+      return b.text.length - a.text.length;
+    });
 
     for (const { text: answer, normal: answerNormal, category } of available) {
       let distractorEntries = [...pools[category].entries()].filter(
