@@ -134,6 +134,48 @@ body {
   transform: scale(0.98);
 }
 
+.or-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-dim);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.or-divider::before,
+.or-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #dde1ee;
+}
+
+.paste-textarea {
+  width: 100%;
+  border: none;
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
+  background: var(--card-bg);
+  padding: 14px 16px;
+  font-family: 'IBM Plex Sans', sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+  resize: vertical;
+}
+
+.paste-textarea:focus {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+.pill-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .photo-preview-wrap {
   border-radius: 22px;
   overflow: hidden;

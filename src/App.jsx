@@ -26,6 +26,7 @@ export default function App() {
   const [view, setView] = useState('capture');
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [pastedText, setPastedText] = useState('');
   const [errorMsg, setErrorMsg] = useState(null);
   const [ocrProgress, setOcrProgress] = useState(0);
 
@@ -38,6 +39,7 @@ export default function App() {
     setView('capture');
     setImageFile(null);
     setImagePreview(null);
+    setPastedText('');
     setErrorMsg(null);
     setOcrProgress(0);
     setQuiz(null);
@@ -74,6 +76,21 @@ export default function App() {
       setErrorMsg(err.message || 'Something went wrong reading that photo.');
       setView('capture');
     }
+  }
+
+  function generateQuizFromPaste() {
+    if (!pastedText.trim()) return;
+    setErrorMsg(null);
+    const generated = generateQuizFromText(pastedText);
+    if (!generated) {
+      setErrorMsg("Couldn't find enough text there to build a quiz. Try pasting a bit more.");
+      return;
+    }
+    setQuiz(generated);
+    setQuestionIndex(0);
+    setSelectedIndex(null);
+    setScore(0);
+    setView('quiz');
   }
 
   function selectAnswer(idx) {
@@ -148,6 +165,23 @@ export default function App() {
                 {errorMsg && <p className="error-text">{errorMsg}</p>}
                 <button className="capture-btn" onClick={() => fileInputRef.current?.click()}>
                   📷 Take a photo of your notes
+                </button>
+
+                <div className="or-divider">or</div>
+
+                <textarea
+                  className="paste-textarea"
+                  placeholder="Paste your notes here…"
+                  value={pastedText}
+                  onChange={(e) => setPastedText(e.target.value)}
+                  rows={6}
+                />
+                <button
+                  className="pill-btn-primary"
+                  disabled={!pastedText.trim()}
+                  onClick={generateQuizFromPaste}
+                >
+                  Generate quiz from text →
                 </button>
               </>
             )}
