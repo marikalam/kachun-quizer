@@ -1,15 +1,6 @@
-const STOPWORDS = new Set(
-  `a an the and or but nor so yet for of to in on at by from with without
-   is are was were be been being have has had do does did will would shall
-   should can could may might must this that these those it its it's they
-   them their there here then than as not no yes you your yours we our ours
-   i my mine he him his she her hers what when where which who whom why how
-   into onto over under again further once about above below up down out off
-   all any both each few more most other some such only own same too very
-   just also each other`
-    .split(/\s+/)
-    .filter(Boolean),
-);
+import nlp from 'compromise';
+
+const POS_CATEGORIES = ['Noun', 'Verb', 'Adjective', 'Adverb'];
 
 function shuffle(list) {
   const copy = [...list];
@@ -20,30 +11,23 @@ function shuffle(list) {
   return copy;
 }
 
-function cleanText(raw) {
-  return raw
-    .replace(/[^\S\n]+/g, ' ')
-    .replace(/\n+/g, ' ')
-    .trim();
+function categoryFor(tags) {
+  for (const tag of POS_CATEGORIES) {
+    if (tags.includes(tag)) return tag;
+  }
+  return null;
 }
 
-function splitSentences(text) {
-  return text
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-function extractWords(sentence) {
-  const matches = sentence.match(/[A-Za-z][A-Za-z'-]{3,}/g) || [];
-  return matches.filter((w) => !STOPWORDS.has(w.toLowerCase()));
-}
-
-function pickAnswerWord(sentence, usedAnswers) {
-  const candidates = extractWords(sentence)
-    .filter((w) => !usedAnswers.has(w.toLowerCase()))
-    .sort((a, b) => b.length - a.length);
-  return candidates[0] || null;
+function sentenceCandidateWords(sentenceTerms) {
+  const candidates = [];
+  for (const term of sentenceTerms) {
+    const text = term.text;
+    if (!/^[A-Za-z][A-Za-z'-]*$/.test(text) || text.length < 4) continue;
+    const category = categoryFor(term.tags || []);
+    if (!category) continue;
+    candidates.push({ text, normal: text.toLowerCase(), category });
+  }
+  return candidates;
 }
 
 function blankOut(sentence, word) {
@@ -52,49 +36,84 @@ function blankOut(sentence, word) {
 }
 
 export function generateQuizFromText(rawText) {
-  const cleaned = cleanText(rawText);
-  const sentences = splitSentences(cleaned).filter((s) => {
-    const wordCount = s.split(/\s+/).length;
-    return wordCount >= 4 && wordCount <= 28;
-  });
+  const cleaned = rawText.replace(/[^\S\n]+/g, ' ').replace(/\n+/g, ' ').trim();
+  if (!cleaned) return null;
 
-  const globalPool = Array.from(
-    new Set(
-      sentences
-        .flatMap(extractWords)
-        .filter((w) => w.length >= 4),
-    ),
-  );
+  const sentences = nlp(cleaned)
+    .json()
+    .filter((s) => s.terms.length >= 4 && s.terms.length <= 28)
+    .map((s) => ({ text: s.text, candidates: sentenceCandidateWords(s.terms) }))
+    .filter((s) => s.candidates.length > 0);
 
-  if (sentences.length < 3 || globalPool.length < 4) {
+  const pools = { Noun: new Map(), Verb: new Map(), Adjective: new Map(), Adverb: new Map() };
+  for (const { candidates } of sentences) {
+    for (const c of candidates) {
+      if (!pools[c.category].has(c.normal)) pools[c.category].set(c.normal, c.text);
+    }
+  }
+  const totalPoolSize = Object.values(pools).reduce((n, m) => n + m.size, 0);
+
+  if (sentences.length < 3 || totalPoolSize < 4) {
     return null;
   }
 
   const usedAnswers = new Set();
-  const questions = [];
 
-  for (const sentence of shuffle(sentences)) {
-    if (questions.length >= 6) break;
-
-    const answer = pickAnswerWord(sentence, usedAnswers);
-    if (!answer) continue;
-
-    const distractorPool = globalPool.filter(
-      (w) => w.toLowerCase() !== answer.toLowerCase() && !usedAnswers.has(w.toLowerCase()),
+  function buildQuestion(sentenceText, candidates, allowCrossCategory) {
+    const available = shuffle(candidates.filter((c) => !usedAnswers.has(c.normal))).sort(
+      (a, b) => b.text.length - a.text.length,
     );
-    if (distractorPool.length < 3) continue;
 
-    const distractors = shuffle(distractorPool).slice(0, 3);
-    const options = shuffle([answer, ...distractors]);
-    const correctIndex = options.indexOf(answer);
+    for (const { text: answer, normal: answerNormal, category } of available) {
+      let distractorEntries = [...pools[category].entries()].filter(
+        ([normal]) => normal !== answerNormal && !usedAnswers.has(normal),
+      );
 
-    questions.push({
-      question: blankOut(sentence, answer),
-      options,
-      correctIndex,
-      explanation: `The notes read: "${sentence}"`,
-    });
-    usedAnswers.add(answer.toLowerCase());
+      if (distractorEntries.length < 3 && allowCrossCategory) {
+        const crossCategoryEntries = POS_CATEGORIES.filter((c) => c !== category).flatMap((c) => [
+          ...pools[c].entries(),
+        ]);
+        distractorEntries = distractorEntries.concat(
+          shuffle(crossCategoryEntries).filter(
+            ([normal]) => normal !== answerNormal && !usedAnswers.has(normal),
+          ),
+        );
+      }
+
+      if (distractorEntries.length < 3) continue;
+
+      const distractors = shuffle(distractorEntries)
+        .slice(0, 3)
+        .map(([, text]) => text);
+      const options = shuffle([answer, ...distractors]);
+
+      usedAnswers.add(answerNormal);
+      return {
+        question: blankOut(sentenceText, answer),
+        options,
+        correctIndex: options.indexOf(answer),
+        explanation: `The notes read: "${sentenceText}"`,
+      };
+    }
+    return null;
+  }
+
+  const questions = [];
+  const leftovers = [];
+
+  for (const { text, candidates } of shuffle(sentences)) {
+    if (questions.length >= 6) break;
+    const q = buildQuestion(text, candidates, false);
+    if (q) questions.push(q);
+    else leftovers.push({ text, candidates });
+  }
+
+  if (questions.length < 3) {
+    for (const { text, candidates } of leftovers) {
+      if (questions.length >= 6) break;
+      const q = buildQuestion(text, candidates, true);
+      if (q) questions.push(q);
+    }
   }
 
   if (questions.length < 3) {

@@ -1,6 +1,5 @@
 import { useRef, useState } from 'react';
 import { recognizeText } from './ocr.js';
-import { generateQuizFromText } from './quizFromText.js';
 
 function ProgressDots({ current, total }) {
   const items = [];
@@ -34,6 +33,7 @@ export default function App() {
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selectedIndex, setSelectedIndex] = useState(null);
   const [score, setScore] = useState(0);
+  const [answers, setAnswers] = useState([]);
 
   function resetAll() {
     setView('capture');
@@ -46,6 +46,7 @@ export default function App() {
     setQuestionIndex(0);
     setSelectedIndex(null);
     setScore(0);
+    setAnswers([]);
   }
 
   function handleFileChange(e) {
@@ -63,6 +64,7 @@ export default function App() {
     setOcrProgress(0);
     try {
       const text = await recognizeText(imageFile, setOcrProgress);
+      const { generateQuizFromText } = await import('./quizFromText.js');
       const generated = generateQuizFromText(text);
       if (!generated) {
         throw new Error("Couldn't find enough legible notes in that photo. Try better lighting or a closer shot.");
@@ -71,6 +73,7 @@ export default function App() {
       setQuestionIndex(0);
       setSelectedIndex(null);
       setScore(0);
+      setAnswers([]);
       setView('quiz');
     } catch (err) {
       setErrorMsg(err.message || 'Something went wrong reading that photo.');
@@ -78,9 +81,10 @@ export default function App() {
     }
   }
 
-  function generateQuizFromPaste() {
+  async function generateQuizFromPaste() {
     if (!pastedText.trim()) return;
     setErrorMsg(null);
+    const { generateQuizFromText } = await import('./quizFromText.js');
     const generated = generateQuizFromText(pastedText);
     if (!generated) {
       setErrorMsg("Couldn't find enough text there to build a quiz. Try pasting a bit more.");
@@ -90,6 +94,7 @@ export default function App() {
     setQuestionIndex(0);
     setSelectedIndex(null);
     setScore(0);
+    setAnswers([]);
     setView('quiz');
   }
 
@@ -97,7 +102,12 @@ export default function App() {
     if (selectedIndex !== null) return;
     setSelectedIndex(idx);
     const q = quiz.questions[questionIndex];
-    if (idx === q.correctIndex) setScore((s) => s + 1);
+    const correct = idx === q.correctIndex;
+    if (correct) setScore((s) => s + 1);
+    setAnswers((prev) => [
+      ...prev,
+      { question: q.question, options: q.options, selectedIndex: idx, correctIndex: q.correctIndex, correct },
+    ]);
   }
 
   function nextQuestion() {
@@ -117,6 +127,15 @@ export default function App() {
     if (idx === selectedIndex) return 'option-btn option-incorrect';
     return 'option-btn option-faded';
   }
+
+  function fillBlank(question, word) {
+    return question.replace('_____', word);
+  }
+
+  const total = quiz?.questions?.length || 0;
+  const percent = total ? Math.round((score / total) * 100) : 0;
+  const resultEmoji = percent >= 80 ? '🎉' : percent >= 50 ? '👍' : '📚';
+  const resultMessage = percent >= 80 ? 'Nice work!' : percent >= 50 ? 'Good effort!' : 'Keep studying!';
 
   return (
     <div className="page">
@@ -219,18 +238,37 @@ export default function App() {
         )}
 
         {view === 'results' && quiz && (
-          <div className="complete-wrap">
-            <div className="complete-emoji">🎉</div>
-            <h2 className="screen-title">
-              {score} / {quiz.questions.length}
-            </h2>
-            <p className="screen-sub">on {quiz.topic}</p>
+          <>
+            <div className="results-header">
+              <div className="complete-emoji">{resultEmoji}</div>
+              <h2 className="screen-title">{resultMessage}</h2>
+              <div className="results-score-ring">
+                <span className="results-score-number">{score}</span>
+                <span className="results-score-total">/ {total}</span>
+              </div>
+              <p className="screen-sub">{percent}% correct</p>
+            </div>
+
+            <div className="review-list">
+              {answers.map((a, i) => (
+                <div key={i} className={`review-item${a.correct ? ' review-correct' : ' review-incorrect'}`}>
+                  <span className="review-icon">{a.correct ? '✓' : '✗'}</span>
+                  <div className="review-text">
+                    <p className="review-question">{fillBlank(a.question, a.options[a.correctIndex])}</p>
+                    {!a.correct && (
+                      <p className="review-your-answer">You said: {a.options[a.selectedIndex]}</p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             <div className="feedback-actions">
               <button className="pill-btn-primary" onClick={resetAll}>
                 New photo →
               </button>
             </div>
-          </div>
+          </>
         )}
       </div>
     </div>
