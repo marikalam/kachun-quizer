@@ -6,11 +6,35 @@ const POS_CATEGORIES = ['Noun', 'Verb', 'Adjective', 'Adverb'];
 const CATEGORY_PRIORITY = { Noun: 0, Verb: 1, Adjective: 2, Adverb: 3 };
 const MIN_CARDS = 10;
 
+// Lines that are almost certainly not prose worth quizzing on - photo
+// captions/credits, boilerplate, etc. Pasted articles and screenshots
+// bring this stuff along, and it produces nonsense questions if it
+// isn't filtered before sentence splitting.
+const JUNK_LINE_PATTERNS = [
+  /\bphoto\s*:/i,
+  /\bcredit\s*:/i,
+  /\bcourtesy\s+of\b/i,
+  /\bgetty\s+images\b/i,
+  /\(\s*ap\s*\)/i,
+  /^\s*advertisement\s*$/i,
+  /^\s*subscribe\b/i,
+  /\ball rights reserved\b/i,
+  /©/,
+];
+
+function isJunkLine(line) {
+  return JUNK_LINE_PATTERNS.some((re) => re.test(line));
+}
+
 function categoryFor(tags) {
   for (const tag of POS_CATEGORIES) {
     if (tags.includes(tag)) return tag;
   }
   return null;
+}
+
+function sentenceHasVerb(terms) {
+  return terms.some((t) => (t.tags || []).includes('Verb'));
 }
 
 function sentenceCandidateWords(sentenceTerms) {
@@ -36,12 +60,21 @@ export function deriveTitle(rawText) {
 // word pools needed to generate distractor options for those cards later.
 // Returns null if there isn't enough content for at least MIN_CARDS.
 export function buildDeckFromText(rawText) {
-  const cleaned = rawText.replace(/[^\S\n]+/g, ' ').replace(/\n+/g, ' ').trim();
-  if (!cleaned) return null;
+  // Split into lines first and treat each as its own boundary - joining
+  // everything into one blob before sentence-splitting is what let an
+  // unrelated caption/credit line on its own line get merged into the
+  // surrounding sentence.
+  const lines = rawText
+    .split(/\n+/)
+    .map((line) => line.replace(/[^\S\n]+/g, ' ').trim())
+    .filter((line) => line.length > 0 && !isJunkLine(line));
 
-  const sentences = nlp(cleaned)
-    .json()
+  if (lines.length === 0) return null;
+
+  const sentences = lines
+    .flatMap((line) => nlp(line).json())
     .filter((s) => s.terms.length >= 4 && s.terms.length <= 28)
+    .filter((s) => sentenceHasVerb(s.terms))
     .map((s) => ({ text: s.text, candidates: sentenceCandidateWords(s.terms) }))
     .filter((s) => s.candidates.length > 0);
 
