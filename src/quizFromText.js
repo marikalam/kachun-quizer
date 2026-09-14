@@ -1,6 +1,8 @@
 import nlp from 'compromise';
 
 const POS_CATEGORIES = ['Noun', 'Verb', 'Adjective', 'Adverb'];
+const TARGET_QUESTIONS = 10;
+const MIN_QUESTIONS = 10;
 
 function shuffle(list) {
   const copy = [...list];
@@ -53,7 +55,7 @@ export function generateQuizFromText(rawText) {
   }
   const totalPoolSize = Object.values(pools).reduce((n, m) => n + m.size, 0);
 
-  if (sentences.length < 3 || totalPoolSize < 4) {
+  if (sentences.length < 5 || totalPoolSize < MIN_QUESTIONS) {
     return null;
   }
 
@@ -99,24 +101,29 @@ export function generateQuizFromText(rawText) {
   }
 
   const questions = [];
-  const leftovers = [];
 
-  for (const { text, candidates } of shuffle(sentences)) {
-    if (questions.length >= 6) break;
-    const q = buildQuestion(text, candidates, false);
-    if (q) questions.push(q);
-    else leftovers.push({ text, candidates });
-  }
-
-  if (questions.length < 3) {
-    for (const { text, candidates } of leftovers) {
-      if (questions.length >= 6) break;
-      const q = buildQuestion(text, candidates, true);
-      if (q) questions.push(q);
+  // Repeatedly sweep every sentence (same-category distractors only). A
+  // sentence with several candidate words can supply more than one
+  // question this way - each pass picks its next-longest unused word.
+  function fillPasses(allowCrossCategory) {
+    let progressed = true;
+    while (questions.length < TARGET_QUESTIONS && progressed) {
+      progressed = false;
+      for (const { text, candidates } of shuffle(sentences)) {
+        if (questions.length >= TARGET_QUESTIONS) break;
+        const q = buildQuestion(text, candidates, allowCrossCategory);
+        if (q) {
+          questions.push(q);
+          progressed = true;
+        }
+      }
     }
   }
 
-  if (questions.length < 3) {
+  fillPasses(false);
+  if (questions.length < TARGET_QUESTIONS) fillPasses(true);
+
+  if (questions.length < MIN_QUESTIONS) {
     return null;
   }
 

@@ -67,7 +67,9 @@ export default function App() {
       const { generateQuizFromText } = await import('./quizFromText.js');
       const generated = generateQuizFromText(text);
       if (!generated) {
-        throw new Error("Couldn't find enough legible notes in that photo. Try better lighting or a closer shot.");
+        throw new Error(
+          "Couldn't build a full 10-question quiz from that photo. Try a clearer/longer shot, or more notes.",
+        );
       }
       setQuiz(generated);
       setQuestionIndex(0);
@@ -87,7 +89,7 @@ export default function App() {
     const { generateQuizFromText } = await import('./quizFromText.js');
     const generated = generateQuizFromText(pastedText);
     if (!generated) {
-      setErrorMsg("Couldn't find enough text there to build a quiz. Try pasting a bit more.");
+      setErrorMsg("Couldn't build a full 10-question quiz from that text. Try pasting more notes.");
       return;
     }
     setQuiz(generated);
