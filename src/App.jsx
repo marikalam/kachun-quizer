@@ -209,7 +209,9 @@ export default function App() {
                       <div className="deck-card-text">
                         <span className="deck-card-title">{deck.title}</span>
                         <span className="deck-card-sub">
-                          {stats.mastered}/{stats.total} mastered · {stats.due} due
+                          {deck.sessionCount === 0
+                            ? `${stats.total} cards · not started yet`
+                            : `${stats.mastered}/${stats.total} mastered · ${stats.due} due for review`}
                         </span>
                       </div>
                       <span className="deck-card-delete" onClick={(e) => handleDeleteDeck(deck.id, e)}>
