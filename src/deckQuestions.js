@@ -16,13 +16,23 @@ export function blankOut(sentence, word) {
 
 // Builds the multiple-choice question for one card at ask-time, pulling
 // distractors from the deck's stored word pools. `excludeNormals` keeps
-// other questions' answers (in the same session) out of this one's options.
+// other questions' answers (in the same session) out of this one's options
+// where possible - but staying within the same part of speech always wins
+// over that: a noun answer should never get an adjective as an option
+// just because the "nicer" same-category candidates were already used
+// elsewhere in this round.
 export function buildQuestionForCard(deck, card, excludeNormals = new Set()) {
   const answerNormal = card.answer.toLowerCase();
-  const exclude = new Set([...excludeNormals, answerNormal]);
+  const samePool = deck.pools[card.category].filter((w) => w.toLowerCase() !== answerNormal);
 
-  let distractorPool = deck.pools[card.category].filter((w) => !exclude.has(w.toLowerCase()));
+  let distractorPool = samePool.filter((w) => !excludeNormals.has(w.toLowerCase()));
+
   if (distractorPool.length < 3) {
+    distractorPool = samePool;
+  }
+
+  if (distractorPool.length < 3) {
+    const exclude = new Set([...excludeNormals, answerNormal]);
     const crossPool = POS_CATEGORIES.filter((c) => c !== card.category).flatMap((c) => deck.pools[c]);
     distractorPool = distractorPool.concat(crossPool.filter((w) => !exclude.has(w.toLowerCase())));
   }

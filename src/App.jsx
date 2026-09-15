@@ -37,7 +37,9 @@ export default function App() {
   const [activeDeckId, setActiveDeckId] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [selectedIndex, setSelectedIndex] = useState(null);
+  const [wrongTried, setWrongTried] = useState(() => new Set());
+  const [revealed, setRevealed] = useState(false);
+  const [answeredThisQuestion, setAnsweredThisQuestion] = useState(false);
   const [score, setScore] = useState(0);
   const [answers, setAnswers] = useState([]);
 
@@ -75,7 +77,9 @@ export default function App() {
       setActiveDeckId(deckId);
       setQuestions(built);
       setQuestionIndex(0);
-      setSelectedIndex(null);
+      setWrongTried(new Set());
+      setRevealed(false);
+      setAnsweredThisQuestion(false);
       setScore(0);
       setAnswers([]);
       setView('quiz');
@@ -126,16 +130,27 @@ export default function App() {
   }
 
   function selectAnswer(idx) {
-    if (selectedIndex !== null) return;
-    setSelectedIndex(idx);
+    if (revealed || wrongTried.has(idx)) return;
     const q = questions[questionIndex];
     const correct = idx === q.correctIndex;
-    if (correct) setScore((s) => s + 1);
-    setAnswers((prev) => [
-      ...prev,
-      { question: q.question, options: q.options, selectedIndex: idx, correctIndex: q.correctIndex, correct },
-    ]);
-    recordAnswer(activeDeckId, q.cardId, correct);
+
+    if (!answeredThisQuestion) {
+      // Only the first attempt counts toward score, history, and the SRS
+      // schedule - retries after a wrong guess are just for learning.
+      setAnsweredThisQuestion(true);
+      if (correct) setScore((s) => s + 1);
+      setAnswers((prev) => [
+        ...prev,
+        { question: q.question, options: q.options, selectedIndex: idx, correctIndex: q.correctIndex, correct },
+      ]);
+      recordAnswer(activeDeckId, q.cardId, correct);
+    }
+
+    if (correct) {
+      setRevealed(true);
+    } else {
+      setWrongTried((prev) => new Set(prev).add(idx));
+    }
   }
 
   function nextQuestion() {
@@ -144,16 +159,18 @@ export default function App() {
       return;
     }
     setQuestionIndex((i) => i + 1);
-    setSelectedIndex(null);
+    setWrongTried(new Set());
+    setRevealed(false);
+    setAnsweredThisQuestion(false);
   }
 
   const currentQuestion = questions[questionIndex];
 
   function optionClass(idx) {
-    if (selectedIndex === null) return 'option-btn';
-    if (idx === currentQuestion.correctIndex) return 'option-btn option-correct';
-    if (idx === selectedIndex) return 'option-btn option-incorrect';
-    return 'option-btn option-faded';
+    if (revealed && idx === currentQuestion.correctIndex) return 'option-btn option-correct';
+    if (wrongTried.has(idx)) return 'option-btn option-incorrect';
+    if (revealed) return 'option-btn option-faded';
+    return 'option-btn';
   }
 
   function fillBlank(question, word) {
@@ -264,6 +281,9 @@ export default function App() {
 
         {view === 'quiz' && currentQuestion && (
           <>
+            <button className="back-link" onClick={resetToHome}>
+              ← Back
+            </button>
             <ProgressDots current={questionIndex + 1} total={questions.length} />
             <h2 className="screen-title">{currentQuestion.question}</h2>
             <div className="options-grid">
@@ -273,7 +293,7 @@ export default function App() {
                 </button>
               ))}
             </div>
-            {selectedIndex !== null && (
+            {revealed && (
               <>
                 <p className="explanation-text">{currentQuestion.explanation}</p>
                 <button className="pill-btn-primary" onClick={nextQuestion}>
