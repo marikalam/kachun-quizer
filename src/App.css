@@ -349,12 +349,17 @@ body {
   appearance: none;
   border: none;
   cursor: pointer;
-  flex: 1;
+  flex: none;
   padding: 13px;
   border-radius: 999px;
   font-family: 'IBM Plex Sans', sans-serif;
   font-weight: 700;
   font-size: 14px;
+}
+
+.feedback-actions .pill-btn-secondary,
+.feedback-actions .pill-btn-primary {
+  flex: 1;
 }
 
 .pill-btn-secondary {
