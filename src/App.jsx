@@ -107,7 +107,6 @@ export default function App() {
       setQuestions(built);
       setQuestionIndex(0);
       setTypedAnswer('');
-      setWrongShown(false);
       setRevealed(false);
       setAnsweredThisQuestion(false);
       setScore(0);
