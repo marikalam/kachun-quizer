@@ -2,7 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import { recognizeText } from './ocr.js';
 import { fetchTextFromUrl } from './urlImport.js';
 import { prewarmVoices, speakResults } from './speech.js';
+import { getApiKey, setApiKey, generateDeckWithClaude, getUsageStats } from './claude.js';
 import { listDecks, createDeck, deleteDeck, startSession, recordAnswer, deckStats, getDeck } from './deckStore.js';
+
+// Turns raw notes text into a deck: Claude writes real comprehension
+// questions when an API key is set, understanding the material instead of
+// just blanking out a word; falls back to the offline word-blanking
+// generator (no key needed, but shallower questions) if there's no key or
+// the Claude request fails for any reason.
+async function buildDeckFromNotes(text) {
+  const apiKey = getApiKey();
+  if (apiKey) {
+    try {
+      const { title, cards } = await generateDeckWithClaude(text, apiKey);
+      return { title, cards, pools: null };
+    } catch (err) {
+      console.warn('Claude quiz generation failed, falling back to basic mode:', err);
+    }
+  }
+  const { buildDeckFromText, deriveTitle } = await import('./deckFromText.js');
+  const built = buildDeckFromText(text);
+  if (!built) return null;
+  return { title: deriveTitle(text), cards: built.cards, pools: built.pools };
+}
 
 function ProgressDots({ current, total }) {
   const items = [];
@@ -48,6 +70,9 @@ export default function App() {
   const [score, setScore] = useState(0);
   const [answers, setAnswers] = useState([]);
 
+  const [apiKeyInput, setApiKeyInput] = useState(() => getApiKey());
+  const [apiKeySaved, setApiKeySaved] = useState(false);
+
   useEffect(() => {
     prewarmVoices();
   }, []);
@@ -58,6 +83,17 @@ export default function App() {
 
   function refreshDecks() {
     setDecks(listDecks());
+  }
+
+  function saveApiKey() {
+    setApiKey(apiKeyInput.trim());
+    setApiKeySaved(true);
+    setTimeout(() => setApiKeySaved(false), 1500);
+  }
+
+  function clearApiKey() {
+    setApiKey('');
+    setApiKeyInput('');
   }
 
   function resetToHome() {
@@ -85,7 +121,7 @@ export default function App() {
       const used = new Set();
       const built = cards.map((card) => {
         const q = buildQuestionForCard(deck, card, used);
-        used.add(card.answer.toLowerCase());
+        used.add((card.answer ?? card.correctAnswer).toLowerCase());
         return q;
       });
       setActiveDeckId(deckId);
@@ -107,14 +143,13 @@ export default function App() {
     setOcrProgress(0);
     try {
       const text = await recognizeText(imageFile, setOcrProgress);
-      const { buildDeckFromText, deriveTitle } = await import('./deckFromText.js');
-      const built = buildDeckFromText(text);
+      const built = await buildDeckFromNotes(text);
       if (!built) {
         throw new Error(
           "Couldn't build a full 10-question deck from that photo. Try a clearer/longer shot, or more notes.",
         );
       }
-      const deck = createDeck(deriveTitle(text), built.cards, built.pools);
+      const deck = createDeck(built.title, built.cards, built.pools);
       refreshDecks();
       beginSession(deck.id);
     } catch (err) {
@@ -125,16 +160,20 @@ export default function App() {
 
   async function createDeckFromPaste() {
     if (!pastedText.trim()) return;
+    setView('generating');
     setErrorMsg(null);
-    const { buildDeckFromText, deriveTitle } = await import('./deckFromText.js');
-    const built = buildDeckFromText(pastedText);
-    if (!built) {
-      setErrorMsg("Couldn't build a full 10-question deck from that text. Try pasting more notes.");
-      return;
+    try {
+      const built = await buildDeckFromNotes(pastedText);
+      if (!built) {
+        throw new Error("Couldn't build a full 10-question deck from that text. Try pasting more notes.");
+      }
+      const deck = createDeck(built.title, built.cards, built.pools);
+      refreshDecks();
+      beginSession(deck.id);
+    } catch (err) {
+      setErrorMsg(err.message || 'Something went wrong with that text.');
+      setView('home');
     }
-    const deck = createDeck(deriveTitle(pastedText), built.cards, built.pools);
-    refreshDecks();
-    beginSession(deck.id);
   }
 
   async function createDeckFromLink() {
@@ -143,12 +182,11 @@ export default function App() {
     setLinkLoading(true);
     try {
       const text = await fetchTextFromUrl(linkUrl);
-      const { buildDeckFromText, deriveTitle } = await import('./deckFromText.js');
-      const built = buildDeckFromText(text);
+      const built = await buildDeckFromNotes(text);
       if (!built) {
         throw new Error("Couldn't build a full 10-question deck from that link. Try a longer note or page.");
       }
-      const deck = createDeck(deriveTitle(text), built.cards, built.pools);
+      const deck = createDeck(built.title, built.cards, built.pools);
       refreshDecks();
       beginSession(deck.id);
     } catch (err) {
@@ -218,6 +256,7 @@ export default function App() {
   const resultMessage = percent >= 80 ? 'Nice work!' : percent >= 50 ? 'Good effort!' : 'Keep studying!';
   const activeDeck = activeDeckId ? getDeck(activeDeckId) : null;
   const activeDeckStats = activeDeck ? deckStats(activeDeck) : null;
+  const usageStats = getUsageStats();
 
   return (
     <div className="page">
@@ -228,9 +267,14 @@ export default function App() {
             <span className="pop-red">e</span>
             <span className="pop-green">r</span>
           </h1>
-          <a className="games-link-btn" href="https://marikalam.github.io/apps/">
-            Apps
-          </a>
+          <div className="brand-row-actions">
+            <button className="games-link-btn" onClick={() => setView('settings')} aria-label="Settings">
+              ⚙️
+            </button>
+            <a className="games-link-btn" href="https://marikalam.github.io/apps/">
+              Apps
+            </a>
+          </div>
         </div>
 
         {view === 'home' && (
@@ -259,6 +303,11 @@ export default function App() {
             )}
 
             <p className="screen-sub">Snap or upload a photo of your notes and get quizzed on them</p>
+            <p className="screen-sub-small">
+              {getApiKey()
+                ? '✨ Claude is writing your questions'
+                : 'Add a Claude API key in ⚙️ Settings for smarter questions'}
+            </p>
 
             <input
               ref={cameraInputRef}
@@ -330,6 +379,69 @@ export default function App() {
                 >
                   {linkLoading ? 'Fetching…' : 'Generate quiz from link →'}
                 </button>
+              </>
+            )}
+          </>
+        )}
+
+        {view === 'settings' && (
+          <>
+            <button className="back-link" onClick={resetToHome}>
+              ← Back
+            </button>
+            <h2 className="screen-title">Settings</h2>
+            <p className="screen-sub">
+              Add your Claude API key so quizzes are written by Claude - real comprehension questions instead of
+              blanked-out words. Get a key at{' '}
+              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
+                console.anthropic.com
+              </a>
+              .
+            </p>
+            <input
+              className="paste-textarea"
+              type="password"
+              placeholder="sk-ant-…"
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+            <p className="error-text-muted">
+              Stored only in this browser's local storage and sent directly to Claude's API - never to any other
+              server. Don't use this on a shared or public computer.
+            </p>
+            <div className="feedback-actions">
+              <button className="pill-btn-secondary" onClick={clearApiKey} disabled={!apiKeyInput}>
+                Clear
+              </button>
+              <button className="pill-btn-primary" onClick={saveApiKey} disabled={!apiKeyInput.trim()}>
+                {apiKeySaved ? 'Saved ✓' : 'Save key'}
+              </button>
+            </div>
+
+            {usageStats.calls > 0 && (
+              <>
+                <div className="screen-sub-small" style={{ marginTop: 8 }}>
+                  USAGE IN THIS APP
+                </div>
+                <div className="stat-tiles">
+                  <div className="stat-tile">
+                    <div className="stat-number">{usageStats.calls}</div>
+                    <div className="stat-label">Claude calls</div>
+                  </div>
+                  <div className="stat-tile">
+                    <div className="stat-number">{(usageStats.inputTokens + usageStats.outputTokens).toLocaleString()}</div>
+                    <div className="stat-label">Total tokens</div>
+                  </div>
+                </div>
+                <p className="error-text-muted">
+                  Every call and its exact token counts are also logged to this browser's console. Check{' '}
+                  <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noreferrer">
+                    console.anthropic.com
+                  </a>{' '}
+                  for actual billing.
+                </p>
               </>
             )}
           </>

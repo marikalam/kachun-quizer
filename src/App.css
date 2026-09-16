@@ -52,6 +52,12 @@ body {
   justify-content: space-between;
 }
 
+.brand-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .back-link {
   appearance: none;
   border: none;
@@ -120,6 +126,13 @@ body {
   margin: -8px 0 0;
 }
 
+.screen-sub-small {
+  font-size: 12px;
+  color: var(--ink-dim);
+  text-align: center;
+  margin: -4px 0 0;
+}
+
 .deck-list {
   display: flex;
   flex-direction: column;
@@ -186,6 +199,13 @@ body {
   text-align: center;
   margin: -4px 0 0;
   font-weight: 600;
+}
+
+.error-text-muted {
+  font-size: 12px;
+  color: var(--ink-dim);
+  text-align: center;
+  margin: -4px 0 0;
 }
 
 .capture-btn {
@@ -387,6 +407,34 @@ body {
 
 .pill-btn-full {
   width: 100%;
+}
+
+.stat-tiles {
+  display: flex;
+  gap: 12px;
+}
+
+.stat-tile {
+  flex: 1;
+  background: var(--card-bg);
+  border-radius: 16px;
+  padding: 14px;
+  text-align: center;
+  box-shadow: var(--shadow-sm);
+}
+
+.stat-number {
+  font-family: 'Fredoka', ui-rounded, system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--ink-dim);
+  margin-top: 2px;
 }
 
 .complete-wrap {

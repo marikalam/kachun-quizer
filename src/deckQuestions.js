@@ -14,6 +14,20 @@ export function blankOut(sentence, word) {
   return sentence.replace(re, '_____');
 }
 
+// Claude-generated cards already carry their own hand-picked distractors,
+// so there's no pool to draw from or vary across sessions - just reshuffle
+// the fixed option set each time the card comes up.
+function buildClaudeQuestion(card) {
+  const options = shuffle([card.correctAnswer, ...card.distractors]);
+  return {
+    cardId: card.id,
+    question: card.question,
+    options,
+    correctIndex: options.indexOf(card.correctAnswer),
+    explanation: card.explanation,
+  };
+}
+
 // Builds the multiple-choice question for one card at ask-time, pulling
 // distractors from the deck's stored word pools. `excludeNormals` keeps
 // other questions' answers (in the same session) out of this one's options
@@ -22,6 +36,8 @@ export function blankOut(sentence, word) {
 // just because the "nicer" same-category candidates were already used
 // elsewhere in this round.
 export function buildQuestionForCard(deck, card, excludeNormals = new Set()) {
+  if (card.question) return buildClaudeQuestion(card);
+
   const answerNormal = card.answer.toLowerCase();
   const samePool = deck.pools[card.category].filter((w) => w.toLowerCase() !== answerNormal);
 
