@@ -1,5 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { recognizeText } from './ocr.js';
+import { fetchTextFromUrl } from './urlImport.js';
+import { prewarmVoices, speakResults } from './speech.js';
 import { listDecks, createDeck, deleteDeck, startSession, recordAnswer, deckStats, getDeck } from './deckStore.js';
 
 function ProgressDots({ current, total }) {
@@ -23,7 +25,8 @@ function ProgressDots({ current, total }) {
 const SESSION_SIZE = 10;
 
 export default function App() {
-  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const libraryInputRef = useRef(null);
 
   const [view, setView] = useState('home');
   const [decks, setDecks] = useState(() => listDecks());
@@ -31,8 +34,10 @@ export default function App() {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [pastedText, setPastedText] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState(null);
   const [ocrProgress, setOcrProgress] = useState(0);
+  const [linkLoading, setLinkLoading] = useState(false);
 
   const [activeDeckId, setActiveDeckId] = useState(null);
   const [questions, setQuestions] = useState([]);
@@ -43,6 +48,14 @@ export default function App() {
   const [score, setScore] = useState(0);
   const [answers, setAnswers] = useState([]);
 
+  useEffect(() => {
+    prewarmVoices();
+  }, []);
+
+  useEffect(() => {
+    if (view === 'results') speakResults(score, questions.length);
+  }, [view]);
+
   function refreshDecks() {
     setDecks(listDecks());
   }
@@ -52,6 +65,7 @@ export default function App() {
     setImageFile(null);
     setImagePreview(null);
     setPastedText('');
+    setLinkUrl('');
     setErrorMsg(null);
     setOcrProgress(0);
     refreshDecks();
@@ -121,6 +135,27 @@ export default function App() {
     const deck = createDeck(deriveTitle(pastedText), built.cards, built.pools);
     refreshDecks();
     beginSession(deck.id);
+  }
+
+  async function createDeckFromLink() {
+    if (!linkUrl.trim()) return;
+    setErrorMsg(null);
+    setLinkLoading(true);
+    try {
+      const text = await fetchTextFromUrl(linkUrl);
+      const { buildDeckFromText, deriveTitle } = await import('./deckFromText.js');
+      const built = buildDeckFromText(text);
+      if (!built) {
+        throw new Error("Couldn't build a full 10-question deck from that link. Try a longer note or page.");
+      }
+      const deck = createDeck(deriveTitle(text), built.cards, built.pools);
+      refreshDecks();
+      beginSession(deck.id);
+    } catch (err) {
+      setErrorMsg(err.message || "Couldn't import that link.");
+    } finally {
+      setLinkLoading(false);
+    }
   }
 
   function handleDeleteDeck(deckId, e) {
@@ -223,13 +258,20 @@ export default function App() {
               </div>
             )}
 
-            <p className="screen-sub">Snap a photo of your notes and get quizzed on them</p>
+            <p className="screen-sub">Snap or upload a photo of your notes and get quizzed on them</p>
 
             <input
-              ref={fileInputRef}
+              ref={cameraInputRef}
               type="file"
               accept="image/*"
               capture="environment"
+              onChange={handleFileChange}
+              style={{ display: 'none' }}
+            />
+            <input
+              ref={libraryInputRef}
+              type="file"
+              accept="image/*"
               onChange={handleFileChange}
               style={{ display: 'none' }}
             />
@@ -241,8 +283,8 @@ export default function App() {
                 </div>
                 {errorMsg && <p className="error-text">{errorMsg}</p>}
                 <div className="feedback-actions">
-                  <button className="pill-btn-secondary" onClick={() => fileInputRef.current?.click()}>
-                    Retake photo
+                  <button className="pill-btn-secondary" onClick={() => libraryInputRef.current?.click()}>
+                    Choose different photo
                   </button>
                   <button className="pill-btn-primary" onClick={createDeckFromPhoto}>
                     Generate quiz →
@@ -252,8 +294,11 @@ export default function App() {
             ) : (
               <>
                 {errorMsg && <p className="error-text">{errorMsg}</p>}
-                <button className="capture-btn" onClick={() => fileInputRef.current?.click()}>
+                <button className="capture-btn" onClick={() => cameraInputRef.current?.click()}>
                   📷 Take a photo of your notes
+                </button>
+                <button className="pill-btn-secondary pill-btn-full" onClick={() => libraryInputRef.current?.click()}>
+                  🖼 Upload a photo
                 </button>
 
                 <div className="or-divider">or</div>
@@ -267,6 +312,23 @@ export default function App() {
                 />
                 <button className="pill-btn-primary" disabled={!pastedText.trim()} onClick={createDeckFromPaste}>
                   Generate quiz from text →
+                </button>
+
+                <div className="or-divider">or</div>
+
+                <input
+                  className="paste-textarea"
+                  type="url"
+                  placeholder="Paste a link (iCloud Notes share link or any webpage)…"
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                />
+                <button
+                  className="pill-btn-primary"
+                  disabled={!linkUrl.trim() || linkLoading}
+                  onClick={createDeckFromLink}
+                >
+                  {linkLoading ? 'Fetching…' : 'Generate quiz from link →'}
                 </button>
               </>
             )}

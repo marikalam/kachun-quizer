@@ -385,6 +385,10 @@ body {
   color: #fff;
 }
 
+.pill-btn-full {
+  width: 100%;
+}
+
 .complete-wrap {
   display: flex;
   flex-direction: column;
