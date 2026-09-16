@@ -1,66 +1,56 @@
-const POS_CATEGORIES = ['Noun', 'Verb', 'Adjective', 'Adverb'];
-
-function shuffle(list) {
-  const copy = [...list];
-  for (let i = copy.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
-}
-
 export function blankOut(sentence, word) {
   const re = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
   return sentence.replace(re, '_____');
 }
 
-// Claude-generated cards already carry their own hand-picked distractors,
-// so there's no pool to draw from or vary across sessions - just reshuffle
-// the fixed option set each time the card comes up.
-function buildClaudeQuestion(card) {
-  const options = shuffle([card.correctAnswer, ...card.distractors]);
-  return {
-    cardId: card.id,
-    question: card.question,
-    options,
-    correctIndex: options.indexOf(card.correctAnswer),
-    explanation: card.explanation,
-  };
-}
-
-// Builds the multiple-choice question for one card at ask-time, pulling
-// distractors from the deck's stored word pools. `excludeNormals` keeps
-// other questions' answers (in the same session) out of this one's options
-// where possible - but staying within the same part of speech always wins
-// over that: a noun answer should never get an adjective as an option
-// just because the "nicer" same-category candidates were already used
-// elsewhere in this round.
-export function buildQuestionForCard(deck, card, excludeNormals = new Set()) {
-  if (card.question) return buildClaudeQuestion(card);
-
-  const answerNormal = card.answer.toLowerCase();
-  const samePool = deck.pools[card.category].filter((w) => w.toLowerCase() !== answerNormal);
-
-  let distractorPool = samePool.filter((w) => !excludeNormals.has(w.toLowerCase()));
-
-  if (distractorPool.length < 3) {
-    distractorPool = samePool;
+// Builds the question shown for one card at ask-time. Claude cards already
+// carry a real question; legacy (offline) cards are a fill-in-the-blank
+// built from the sentence the word was pulled from.
+export function buildQuestionForCard(card) {
+  if (card.question) {
+    return { cardId: card.id, question: card.question, answer: card.correctAnswer, explanation: card.explanation };
   }
-
-  if (distractorPool.length < 3) {
-    const exclude = new Set([...excludeNormals, answerNormal]);
-    const crossPool = POS_CATEGORIES.filter((c) => c !== card.category).flatMap((c) => deck.pools[c]);
-    distractorPool = distractorPool.concat(crossPool.filter((w) => !exclude.has(w.toLowerCase())));
-  }
-
-  const distractors = shuffle(distractorPool).slice(0, 3);
-  const options = shuffle([card.answer, ...distractors]);
-
   return {
     cardId: card.id,
     question: blankOut(card.sentence, card.answer),
-    options,
-    correctIndex: options.indexOf(card.answer),
+    answer: card.answer,
     explanation: `The notes read: "${card.sentence}"`,
   };
+}
+
+function normalize(str) {
+  return str
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Plain Levenshtein edit distance, used to forgive a single typo on
+// mobile keyboards without accepting genuinely wrong answers.
+function editDistance(a, b) {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+// Typed answers need to forgive case, punctuation, and the occasional
+// fat-fingered letter on a phone keyboard, without turning into a real
+// answer key for a completely different word.
+export function matchesAnswer(typed, correctAnswer) {
+  const a = normalize(typed);
+  const b = normalize(correctAnswer);
+  if (!a) return false;
+  if (a === b) return true;
+  const tolerance = b.length >= 8 ? 2 : b.length >= 4 ? 1 : 0;
+  return editDistance(a, b) <= tolerance;
 }

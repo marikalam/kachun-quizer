@@ -1,29 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { recognizeText } from './ocr.js';
-import { fetchTextFromUrl } from './urlImport.js';
 import { prewarmVoices, speakResults } from './speech.js';
-import { getApiKey, setApiKey, generateDeckWithClaude, getUsageStats } from './claude.js';
+import { generateDeckWithClaude, getUsageStats } from './claude.js';
 import { listDecks, createDeck, deleteDeck, startSession, recordAnswer, deckStats, getDeck } from './deckStore.js';
 
-// Turns raw notes text into a deck: Claude writes real comprehension
-// questions when an API key is set, understanding the material instead of
-// just blanking out a word; falls back to the offline word-blanking
-// generator (no key needed, but shallower questions) if there's no key or
-// the Claude request fails for any reason.
+// Turns raw notes text into a deck: Claude (via the server-side proxy)
+// writes real comprehension questions, understanding the material instead
+// of just blanking out a word; falls back to the offline word-blanking
+// generator if the request fails for any reason (offline, proxy down,
+// rate-limited, etc.) so a session is never a dead end.
 async function buildDeckFromNotes(text) {
-  const apiKey = getApiKey();
-  if (apiKey) {
-    try {
-      const { title, cards } = await generateDeckWithClaude(text, apiKey);
-      return { title, cards, pools: null };
-    } catch (err) {
-      console.warn('Claude quiz generation failed, falling back to basic mode:', err);
-    }
+  try {
+    return await generateDeckWithClaude(text);
+  } catch (err) {
+    console.warn('Claude quiz generation failed, falling back to basic mode:', err);
   }
   const { buildDeckFromText, deriveTitle } = await import('./deckFromText.js');
   const built = buildDeckFromText(text);
   if (!built) return null;
-  return { title: deriveTitle(text), cards: built.cards, pools: built.pools };
+  return { title: deriveTitle(text), cards: built.cards };
 }
 
 function ProgressDots({ current, total }) {
@@ -56,22 +51,19 @@ export default function App() {
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [pastedText, setPastedText] = useState('');
-  const [linkUrl, setLinkUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState(null);
   const [ocrProgress, setOcrProgress] = useState(0);
-  const [linkLoading, setLinkLoading] = useState(false);
 
   const [activeDeckId, setActiveDeckId] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [wrongTried, setWrongTried] = useState(() => new Set());
+  const [typedAnswer, setTypedAnswer] = useState('');
+  const [wrongShown, setWrongShown] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [answeredThisQuestion, setAnsweredThisQuestion] = useState(false);
   const [score, setScore] = useState(0);
   const [answers, setAnswers] = useState([]);
-
-  const [apiKeyInput, setApiKeyInput] = useState(() => getApiKey());
-  const [apiKeySaved, setApiKeySaved] = useState(false);
+  const answerInputRef = useRef(null);
 
   useEffect(() => {
     prewarmVoices();
@@ -81,19 +73,12 @@ export default function App() {
     if (view === 'results') speakResults(score, questions.length);
   }, [view]);
 
+  useEffect(() => {
+    if (view === 'quiz' && !revealed) answerInputRef.current?.focus();
+  }, [view, questionIndex, revealed]);
+
   function refreshDecks() {
     setDecks(listDecks());
-  }
-
-  function saveApiKey() {
-    setApiKey(apiKeyInput.trim());
-    setApiKeySaved(true);
-    setTimeout(() => setApiKeySaved(false), 1500);
-  }
-
-  function clearApiKey() {
-    setApiKey('');
-    setApiKeyInput('');
   }
 
   function resetToHome() {
@@ -101,7 +86,6 @@ export default function App() {
     setImageFile(null);
     setImagePreview(null);
     setPastedText('');
-    setLinkUrl('');
     setErrorMsg(null);
     setOcrProgress(0);
     refreshDecks();
@@ -116,18 +100,14 @@ export default function App() {
   }
 
   function beginSession(deckId) {
-    const { deck, cards } = startSession(deckId, SESSION_SIZE);
+    const { cards } = startSession(deckId, SESSION_SIZE);
     import('./deckQuestions.js').then(({ buildQuestionForCard }) => {
-      const used = new Set();
-      const built = cards.map((card) => {
-        const q = buildQuestionForCard(deck, card, used);
-        used.add((card.answer ?? card.correctAnswer).toLowerCase());
-        return q;
-      });
+      const built = cards.map((card) => buildQuestionForCard(card));
       setActiveDeckId(deckId);
       setQuestions(built);
       setQuestionIndex(0);
-      setWrongTried(new Set());
+      setTypedAnswer('');
+      setWrongShown(false);
       setRevealed(false);
       setAnsweredThisQuestion(false);
       setScore(0);
@@ -149,7 +129,7 @@ export default function App() {
           "Couldn't build a full 10-question deck from that photo. Try a clearer/longer shot, or more notes.",
         );
       }
-      const deck = createDeck(built.title, built.cards, built.pools);
+      const deck = createDeck(built.title, built.cards);
       refreshDecks();
       beginSession(deck.id);
     } catch (err) {
@@ -167,32 +147,12 @@ export default function App() {
       if (!built) {
         throw new Error("Couldn't build a full 10-question deck from that text. Try pasting more notes.");
       }
-      const deck = createDeck(built.title, built.cards, built.pools);
+      const deck = createDeck(built.title, built.cards);
       refreshDecks();
       beginSession(deck.id);
     } catch (err) {
       setErrorMsg(err.message || 'Something went wrong with that text.');
       setView('home');
-    }
-  }
-
-  async function createDeckFromLink() {
-    if (!linkUrl.trim()) return;
-    setErrorMsg(null);
-    setLinkLoading(true);
-    try {
-      const text = await fetchTextFromUrl(linkUrl);
-      const built = await buildDeckFromNotes(text);
-      if (!built) {
-        throw new Error("Couldn't build a full 10-question deck from that link. Try a longer note or page.");
-      }
-      const deck = createDeck(built.title, built.cards, built.pools);
-      refreshDecks();
-      beginSession(deck.id);
-    } catch (err) {
-      setErrorMsg(err.message || "Couldn't import that link.");
-    } finally {
-      setLinkLoading(false);
     }
   }
 
@@ -202,10 +162,11 @@ export default function App() {
     refreshDecks();
   }
 
-  function selectAnswer(idx) {
-    if (revealed || wrongTried.has(idx)) return;
+  async function submitAnswer() {
+    if (revealed || !typedAnswer.trim()) return;
     const q = questions[questionIndex];
-    const correct = idx === q.correctIndex;
+    const { matchesAnswer } = await import('./deckQuestions.js');
+    const correct = matchesAnswer(typedAnswer, q.answer);
 
     if (!answeredThisQuestion) {
       // Only the first attempt counts toward score, history, and the SRS
@@ -214,7 +175,7 @@ export default function App() {
       if (correct) setScore((s) => s + 1);
       setAnswers((prev) => [
         ...prev,
-        { question: q.question, options: q.options, selectedIndex: idx, correctIndex: q.correctIndex, correct },
+        { question: q.question, answer: q.answer, typed: typedAnswer.trim(), correct },
       ]);
       recordAnswer(activeDeckId, q.cardId, correct);
     }
@@ -222,7 +183,8 @@ export default function App() {
     if (correct) {
       setRevealed(true);
     } else {
-      setWrongTried((prev) => new Set(prev).add(idx));
+      setWrongShown(true);
+      setTypedAnswer('');
     }
   }
 
@@ -232,19 +194,13 @@ export default function App() {
       return;
     }
     setQuestionIndex((i) => i + 1);
-    setWrongTried(new Set());
+    setTypedAnswer('');
+    setWrongShown(false);
     setRevealed(false);
     setAnsweredThisQuestion(false);
   }
 
   const currentQuestion = questions[questionIndex];
-
-  function optionClass(idx) {
-    if (revealed && idx === currentQuestion.correctIndex) return 'option-btn option-correct';
-    if (wrongTried.has(idx)) return 'option-btn option-incorrect';
-    if (revealed) return 'option-btn option-faded';
-    return 'option-btn';
-  }
 
   function fillBlank(question, word) {
     return question.replace('_____', word);
@@ -303,11 +259,7 @@ export default function App() {
             )}
 
             <p className="screen-sub">Snap or upload a photo of your notes and get quizzed on them</p>
-            <p className="screen-sub-small">
-              {getApiKey()
-                ? '✨ Claude is writing your questions'
-                : 'Add a Claude API key in ⚙️ Settings for smarter questions'}
-            </p>
+            <p className="screen-sub-small">✨ Claude is writing your questions</p>
 
             <input
               ref={cameraInputRef}
@@ -343,15 +295,6 @@ export default function App() {
             ) : (
               <>
                 {errorMsg && <p className="error-text">{errorMsg}</p>}
-                <button className="capture-btn" onClick={() => cameraInputRef.current?.click()}>
-                  📷 Take a photo of your notes
-                </button>
-                <button className="pill-btn-secondary pill-btn-full" onClick={() => libraryInputRef.current?.click()}>
-                  🖼 Upload a photo
-                </button>
-
-                <div className="or-divider">or</div>
-
                 <textarea
                   className="paste-textarea"
                   placeholder="Paste your notes here…"
@@ -365,19 +308,11 @@ export default function App() {
 
                 <div className="or-divider">or</div>
 
-                <input
-                  className="paste-textarea"
-                  type="url"
-                  placeholder="Paste a link (iCloud Notes share link or any webpage)…"
-                  value={linkUrl}
-                  onChange={(e) => setLinkUrl(e.target.value)}
-                />
-                <button
-                  className="pill-btn-primary"
-                  disabled={!linkUrl.trim() || linkLoading}
-                  onClick={createDeckFromLink}
-                >
-                  {linkLoading ? 'Fetching…' : 'Generate quiz from link →'}
+                <button className="capture-btn" onClick={() => cameraInputRef.current?.click()}>
+                  📷 Take a photo of your notes
+                </button>
+                <button className="pill-btn-secondary pill-btn-full" onClick={() => libraryInputRef.current?.click()}>
+                  🖼 Upload a photo
                 </button>
               </>
             )}
@@ -391,36 +326,11 @@ export default function App() {
             </button>
             <h2 className="screen-title">Settings</h2>
             <p className="screen-sub">
-              Add your Claude API key so quizzes are written by Claude - real comprehension questions instead of
-              blanked-out words. Get a key at{' '}
-              <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">
-                console.anthropic.com
-              </a>
-              .
+              Quizzes are written by Claude automatically - no setup needed. The API key lives on a small server-side
+              proxy, never in this app or your browser.
             </p>
-            <input
-              className="paste-textarea"
-              type="password"
-              placeholder="sk-ant-…"
-              value={apiKeyInput}
-              onChange={(e) => setApiKeyInput(e.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-            <p className="error-text-muted">
-              Stored only in this browser's local storage and sent directly to Claude's API - never to any other
-              server. Don't use this on a shared or public computer.
-            </p>
-            <div className="feedback-actions">
-              <button className="pill-btn-secondary" onClick={clearApiKey} disabled={!apiKeyInput}>
-                Clear
-              </button>
-              <button className="pill-btn-primary" onClick={saveApiKey} disabled={!apiKeyInput.trim()}>
-                {apiKeySaved ? 'Saved ✓' : 'Save key'}
-              </button>
-            </div>
 
-            {usageStats.calls > 0 && (
+            {usageStats.calls > 0 ? (
               <>
                 <div className="screen-sub-small" style={{ marginTop: 8 }}>
                   USAGE IN THIS APP
@@ -435,14 +345,10 @@ export default function App() {
                     <div className="stat-label">Total tokens</div>
                   </div>
                 </div>
-                <p className="error-text-muted">
-                  Every call and its exact token counts are also logged to this browser's console. Check{' '}
-                  <a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noreferrer">
-                    console.anthropic.com
-                  </a>{' '}
-                  for actual billing.
-                </p>
+                <p className="error-text-muted">Every call and its exact token counts are also logged to this browser's console.</p>
               </>
+            ) : (
+              <p className="screen-sub-small">No Claude calls from this browser yet.</p>
             )}
           </>
         )}
@@ -462,15 +368,38 @@ export default function App() {
             </button>
             <ProgressDots current={questionIndex + 1} total={questions.length} />
             <h2 className="screen-title">{currentQuestion.question}</h2>
-            <div className="options-grid">
-              {currentQuestion.options.map((opt, idx) => (
-                <button key={idx} className={optionClass(idx)} onClick={() => selectAnswer(idx)}>
-                  {opt}
+
+            {!revealed && (
+              <>
+                <input
+                  ref={answerInputRef}
+                  className="answer-input"
+                  type="text"
+                  placeholder="Type your answer…"
+                  value={typedAnswer}
+                  onChange={(e) => {
+                    setTypedAnswer(e.target.value);
+                    setWrongShown(false);
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  enterKeyHint="done"
+                />
+                {wrongShown && <p className="error-text">Not quite - try again</p>}
+                <button className="pill-btn-primary pill-btn-full" disabled={!typedAnswer.trim()} onClick={submitAnswer}>
+                  Check answer →
                 </button>
-              ))}
-            </div>
+              </>
+            )}
+
             {revealed && (
               <>
+                <div className="answer-card-plain">
+                  <div className="answer-equation">{currentQuestion.answer}</div>
+                </div>
                 <p className="explanation-text">{currentQuestion.explanation}</p>
                 <button className="pill-btn-primary" onClick={nextQuestion}>
                   {questionIndex + 1 >= questions.length ? 'See results' : 'Next question'} →
@@ -502,8 +431,8 @@ export default function App() {
                 <div key={i} className={`review-item${a.correct ? ' review-correct' : ' review-incorrect'}`}>
                   <span className="review-icon">{a.correct ? '✓' : '✗'}</span>
                   <div className="review-text">
-                    <p className="review-question">{fillBlank(a.question, a.options[a.correctIndex])}</p>
-                    {!a.correct && <p className="review-your-answer">You said: {a.options[a.selectedIndex]}</p>}
+                    <p className="review-question">{fillBlank(a.question, a.answer)}</p>
+                    {!a.correct && <p className="review-your-answer">You typed: {a.typed}</p>}
                   </div>
                 </div>
               ))}

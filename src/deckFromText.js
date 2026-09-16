@@ -78,17 +78,16 @@ export function buildDeckFromText(rawText) {
     .map((s) => ({ text: s.text, candidates: sentenceCandidateWords(s.terms) }))
     .filter((s) => s.candidates.length > 0);
 
-  const pools = { Noun: new Set(), Verb: new Set(), Adjective: new Set(), Adverb: new Set() };
   const wordFrequency = new Map();
+  const uniqueCandidates = new Set();
   for (const { candidates } of sentences) {
     for (const c of candidates) {
-      pools[c.category].add(c.text);
       wordFrequency.set(c.normal, (wordFrequency.get(c.normal) || 0) + 1);
+      uniqueCandidates.add(c.normal);
     }
   }
-  const totalPoolSize = Object.values(pools).reduce((n, s) => n + s.size, 0);
 
-  if (sentences.length < MIN_CARDS || totalPoolSize < MIN_CARDS) {
+  if (sentences.length < MIN_CARDS || uniqueCandidates.size < MIN_CARDS) {
     return null;
   }
 
@@ -148,13 +147,5 @@ export function buildDeckFromText(rawText) {
     return null;
   }
 
-  return {
-    cards,
-    pools: {
-      Noun: [...pools.Noun],
-      Verb: [...pools.Verb],
-      Adjective: [...pools.Adjective],
-      Adverb: [...pools.Adverb],
-    },
-  };
+  return { cards };
 }
