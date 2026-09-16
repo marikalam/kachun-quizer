@@ -331,6 +331,22 @@ body {
   margin: -4px 0 0;
 }
 
+.feedback-correct-text {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-green);
+  text-align: center;
+  margin: -4px 0 0;
+}
+
+.feedback-incorrect-text {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-red);
+  text-align: center;
+  margin: -4px 0 0;
+}
+
 .feedback-actions {
   display: flex;
   gap: 10px;

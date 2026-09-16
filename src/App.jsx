@@ -58,7 +58,7 @@ export default function App() {
   const [questions, setQuestions] = useState([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [typedAnswer, setTypedAnswer] = useState('');
-  const [wrongShown, setWrongShown] = useState(false);
+  const [lastCorrect, setLastCorrect] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [answeredThisQuestion, setAnsweredThisQuestion] = useState(false);
   const [score, setScore] = useState(0);
@@ -168,24 +168,14 @@ export default function App() {
     const { matchesAnswer } = await import('./deckQuestions.js');
     const correct = matchesAnswer(typedAnswer, q.answer);
 
-    if (!answeredThisQuestion) {
-      // Only the first attempt counts toward score, history, and the SRS
-      // schedule - retries after a wrong guess are just for learning.
-      setAnsweredThisQuestion(true);
-      if (correct) setScore((s) => s + 1);
-      setAnswers((prev) => [
-        ...prev,
-        { question: q.question, answer: q.answer, typed: typedAnswer.trim(), correct },
-      ]);
-      recordAnswer(activeDeckId, q.cardId, correct);
-    }
-
-    if (correct) {
-      setRevealed(true);
-    } else {
-      setWrongShown(true);
-      setTypedAnswer('');
-    }
+    // Just one attempt per question - right or wrong, it counts toward
+    // score/history/the SRS schedule and immediately reveals the answer.
+    setAnsweredThisQuestion(true);
+    setAnswers((prev) => [...prev, { question: q.question, answer: q.answer, typed: typedAnswer.trim(), correct }]);
+    recordAnswer(activeDeckId, q.cardId, correct);
+    if (correct) setScore((s) => s + 1);
+    setLastCorrect(correct);
+    setRevealed(true);
   }
 
   function nextQuestion() {
@@ -195,7 +185,6 @@ export default function App() {
     }
     setQuestionIndex((i) => i + 1);
     setTypedAnswer('');
-    setWrongShown(false);
     setRevealed(false);
     setAnsweredThisQuestion(false);
   }
@@ -377,10 +366,7 @@ export default function App() {
                   type="text"
                   placeholder="Type your answer…"
                   value={typedAnswer}
-                  onChange={(e) => {
-                    setTypedAnswer(e.target.value);
-                    setWrongShown(false);
-                  }}
+                  onChange={(e) => setTypedAnswer(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
                   autoComplete="off"
                   autoCorrect="off"
@@ -388,7 +374,6 @@ export default function App() {
                   spellCheck={false}
                   enterKeyHint="done"
                 />
-                {wrongShown && <p className="error-text">Not quite - try again</p>}
                 <button className="pill-btn-primary pill-btn-full" disabled={!typedAnswer.trim()} onClick={submitAnswer}>
                   Check answer →
                 </button>
@@ -397,6 +382,9 @@ export default function App() {
 
             {revealed && (
               <>
+                <p className={lastCorrect ? 'feedback-correct-text' : 'feedback-incorrect-text'}>
+                  {lastCorrect ? '✓ Correct!' : `✗ Not quite - you typed "${typedAnswer}"`}
+                </p>
                 <div className="answer-card-plain">
                   <div className="answer-equation">{currentQuestion.answer}</div>
                 </div>
