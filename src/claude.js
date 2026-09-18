@@ -93,7 +93,7 @@ export async function generateDeckWithClaude(notesText) {
   }
 
   if (!parsed || !Array.isArray(parsed.questions) || parsed.questions.length < 4) {
-    throw new Error("Claude couldn't build enough good questions from that. Try longer or clearer notes.");
+    throw new Error("Claude couldn't generate enough questions from that. Try longer or clearer notes.");
   }
 
   const cards = parsed.questions
@@ -103,14 +103,67 @@ export async function generateDeckWithClaude(notesText) {
       question: q.question,
       correctAnswer: q.correctAnswer,
       explanation: q.explanation || '',
+      concept: q.concept || q.topic || 'General Knowledge',
     }));
 
   if (cards.length < 4) {
-    throw new Error("Claude couldn't build enough good questions from that. Try longer or clearer notes.");
+    throw new Error("Claude couldn't generate enough questions from that. Try longer or clearer notes.");
+  }
+
+  // If we have fewer than 10 questions, generate similar ones to reach 10
+  if (cards.length < 10) {
+    console.log(`[Claude] Got ${cards.length} questions, generating similar ones to reach 10...`);
+    const needed = 10 - cards.length;
+
+    try {
+      const conceptsList = cards.map(c => c.concept).join(', ');
+      const conceptsToFocus = [...new Set(cards.map(c => c.concept))].slice(0, 3).join(', ');
+
+      let followUpResponse;
+      try {
+        followUpResponse = await fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            notesText: `Generate ${needed} MORE practice questions similar in style and difficulty to these ${cards.length} existing questions. Focus on these concepts: ${conceptsToFocus}. Make them varied but covering the same topics. Return as JSON array with "questions" key.`,
+            isFollowUp: true
+          }),
+        });
+      } catch (err) {
+        console.warn('[Claude] Follow-up generation failed, continuing with fewer questions');
+        return { title: parsed.title || 'My notes', cards };
+      }
+
+      if (followUpResponse.ok) {
+        const followUpData = await followUpResponse.json();
+        const followUpText = (followUpData.content || []).map((block) => block.text || '').join('');
+
+        try {
+          const followUpParsed = extractJson(followUpText);
+          const followUpCards = (followUpParsed.questions || [])
+            .filter((q) => q && q.question && q.correctAnswer)
+            .slice(0, needed)
+            .map((q, i) => ({
+              id: `claude-follow-${i}`,
+              question: q.question,
+              correctAnswer: q.correctAnswer,
+              explanation: q.explanation || '',
+              concept: q.concept || q.topic || 'General Knowledge',
+            }));
+
+          cards.push(...followUpCards);
+          console.log(`[Claude] Generated ${followUpCards.length} follow-up questions, total now: ${cards.length}`);
+        } catch (e) {
+          console.warn('[Claude] Could not parse follow-up questions:', e);
+        }
+      }
+    } catch (err) {
+      console.warn('[Claude] Follow-up generation error:', err);
+    }
   }
 
   return {
     title: parsed.title || 'My notes',
-    cards,
+    cards: cards.slice(0, 10), // Ensure we cap at 10
   };
 }

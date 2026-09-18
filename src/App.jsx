@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { recognizeText } from './ocr.js';
 import { prewarmVoices, speakResults } from './speech.js';
-import { generateDeckWithClaude, getUsageStats } from './claude.js';
+import { generateDeckWithClaude } from './claude.js';
 import { listDecks, createDeck, deleteDeck, startSession, recordAnswer, deckStats, getDeck } from './deckStore.js';
 
 // Turns raw notes text into a deck: Claude (via the server-side proxy)
@@ -58,11 +58,13 @@ export default function App() {
   const [questions, setQuestions] = useState([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [typedAnswer, setTypedAnswer] = useState('');
+  const [choiceOptions, setChoiceOptions] = useState([]);
   const [lastCorrect, setLastCorrect] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const [answeredThisQuestion, setAnsweredThisQuestion] = useState(false);
   const [score, setScore] = useState(0);
   const [answers, setAnswers] = useState([]);
+  const [conceptPerformance, setConceptPerformance] = useState({});
   const answerInputRef = useRef(null);
 
   useEffect(() => {
@@ -99,6 +101,25 @@ export default function App() {
     setErrorMsg(null);
   }
 
+  function isMultiWordAnswer(answer) {
+    return answer.trim().split(/\s+/).length > 1;
+  }
+
+  function generateChoiceOptions(answer, allQuestions, currentIndex) {
+    // Get all possible answers except the current one
+    const otherAnswers = allQuestions
+      .map((q, i) => i !== currentIndex ? q.answer : null)
+      .filter(Boolean);
+
+    // Shuffle and pick 3 distractors
+    const shuffled = otherAnswers.sort(() => Math.random() - 0.5);
+    const distractors = shuffled.slice(0, 3);
+
+    // Combine and shuffle with correct answer
+    const options = [answer, ...distractors].sort(() => Math.random() - 0.5);
+    return options;
+  }
+
   function beginSession(deckId) {
     const { cards } = startSession(deckId, SESSION_SIZE);
     import('./deckQuestions.js').then(({ buildQuestionForCard }) => {
@@ -107,10 +128,16 @@ export default function App() {
       setQuestions(built);
       setQuestionIndex(0);
       setTypedAnswer('');
+      setChoiceOptions([]);
       setRevealed(false);
       setAnsweredThisQuestion(false);
       setScore(0);
       setAnswers([]);
+      setConceptPerformance({});
+      // Generate choice options for the first question if it has a multi-word answer
+      if (built.length > 0 && isMultiWordAnswer(built[0].answer)) {
+        setChoiceOptions(generateChoiceOptions(built[0].answer, built, 0));
+      }
       setView('quiz');
     });
   }
@@ -122,10 +149,11 @@ export default function App() {
     setOcrProgress(0);
     try {
       const text = await recognizeText(imageFile, setOcrProgress);
+;
       const built = await buildDeckFromNotes(text);
       if (!built) {
         throw new Error(
-          "Couldn't build a full 10-question deck from that photo. Try a clearer/longer shot, or more notes.",
+          "Couldn't generate enough questions from that photo. Try a clearer/longer shot, or more notes.",
         );
       }
       const deck = createDeck(built.title, built.cards);
@@ -144,7 +172,7 @@ export default function App() {
     try {
       const built = await buildDeckFromNotes(pastedText);
       if (!built) {
-        throw new Error("Couldn't build a full 10-question deck from that text. Try pasting more notes.");
+        throw new Error("Couldn't generate enough questions from that text. Try pasting more notes.");
       }
       const deck = createDeck(built.title, built.cards);
       refreshDecks();
@@ -167,13 +195,64 @@ export default function App() {
     const { matchesAnswer } = await import('./deckQuestions.js');
     const correct = matchesAnswer(typedAnswer, q.answer);
 
+    // Track concept performance
+    setConceptPerformance((prev) => {
+      const concept = q.concept || 'General Knowledge';
+      const current = prev[concept] || { correct: 0, total: 0 };
+      return {
+        ...prev,
+        [concept]: {
+          correct: current.correct + (correct ? 1 : 0),
+          total: current.total + 1,
+        },
+      };
+    });
+
     // Just one attempt per question - right or wrong, it counts toward
     // score/history/the SRS schedule and immediately reveals the answer.
     setAnsweredThisQuestion(true);
-    setAnswers((prev) => [...prev, { question: q.question, answer: q.answer, typed: typedAnswer.trim(), correct }]);
+    setAnswers((prev) => [...prev, { question: q.question, answer: q.answer, typed: typedAnswer.trim(), correct, concept: q.concept }]);
     recordAnswer(activeDeckId, q.cardId, correct);
     if (correct) setScore((s) => s + 1);
     setLastCorrect(correct);
+    setRevealed(true);
+  }
+
+  function submitChoice(selectedAnswer) {
+    if (revealed) return;
+    const q = questions[questionIndex];
+    const correct = selectedAnswer === q.answer;
+
+    setAnsweredThisQuestion(true);
+    setAnswers((prev) => [...prev, { question: q.question, answer: q.answer, typed: selectedAnswer, correct }]);
+    recordAnswer(activeDeckId, q.cardId, correct);
+    if (correct) setScore((s) => s + 1);
+    setLastCorrect(correct);
+    setRevealed(true);
+  }
+
+  function dontKnow() {
+    if (revealed) return;
+    const q = questions[questionIndex];
+
+    // Track concept performance
+    setConceptPerformance((prev) => {
+      const concept = q.concept || 'General Knowledge';
+      const current = prev[concept] || { correct: 0, total: 0 };
+      return {
+        ...prev,
+        [concept]: {
+          correct: current.correct,
+          total: current.total + 1,
+        },
+      };
+    });
+
+    // Record as incorrect (don't know = wrong answer for spaced repetition)
+    setAnsweredThisQuestion(true);
+    setAnswers((prev) => [...prev, { question: q.question, answer: q.answer, typed: 'I don\'t know', correct: false, concept: q.concept }]);
+    recordAnswer(activeDeckId, q.cardId, false);
+    setLastCorrect(false);
     setRevealed(true);
   }
 
@@ -182,10 +261,18 @@ export default function App() {
       setView('results');
       return;
     }
-    setQuestionIndex((i) => i + 1);
+    const nextIndex = questionIndex + 1;
+    setQuestionIndex(nextIndex);
     setTypedAnswer('');
     setRevealed(false);
     setAnsweredThisQuestion(false);
+    // Generate choice options for the next question if it has a multi-word answer
+    const nextQuestion = questions[nextIndex];
+    if (nextQuestion && isMultiWordAnswer(nextQuestion.answer)) {
+      setChoiceOptions(generateChoiceOptions(nextQuestion.answer, questions, nextIndex));
+    } else {
+      setChoiceOptions([]);
+    }
   }
 
   const currentQuestion = questions[questionIndex];
@@ -200,143 +287,136 @@ export default function App() {
   const resultMessage = percent >= 80 ? 'Nice work!' : percent >= 50 ? 'Good effort!' : 'Keep studying!';
   const activeDeck = activeDeckId ? getDeck(activeDeckId) : null;
   const activeDeckStats = activeDeck ? deckStats(activeDeck) : null;
-  const usageStats = getUsageStats();
 
   return (
     <div className="page">
       <div className="app">
-        <div className="brand-row">
-          <h1 className="logo">
-            <span className="ink">Kachun</span> <span className="pop-blue">Quiz</span>
-            <span className="pop-red">e</span>
-            <span className="pop-green">r</span>
-          </h1>
-          <div className="brand-row-actions">
-            <button className="games-link-btn" onClick={() => setView('settings')} aria-label="Settings">
-              ⚙️
+        {view !== 'home' && (
+          <div className="brand-row">
+            <button className="logo-btn" onClick={resetToHome}>
+              <h1 className="logo">KachunQuizer.ai</h1>
             </button>
-            <a className="games-link-btn" href="https://marikalam.github.io/apps/">
-              Apps
-            </a>
+            <div className="brand-row-actions">
+              <a className="games-link-btn" href="https://marikalam.github.io/apps/">
+                Apps
+              </a>
+            </div>
           </div>
-        </div>
+        )}
 
         {view === 'home' && (
           <>
-            {decks.length > 0 && (
-              <div className="deck-list">
-                {decks.map((deck) => {
-                  const stats = deckStats(deck);
-                  return (
-                    <button key={deck.id} className="deck-card" onClick={() => beginSession(deck.id)}>
-                      <div className="deck-card-text">
-                        <span className="deck-card-title">{deck.title}</span>
-                        <span className="deck-card-sub">
-                          {deck.sessionCount === 0
-                            ? `${stats.total} cards · not started yet`
-                            : `${stats.mastered}/${stats.total} mastered · ${stats.due} due for review`}
-                        </span>
-                      </div>
-                      <span className="deck-card-delete" onClick={(e) => handleDeleteDeck(deck.id, e)}>
-                        🗑
-                      </span>
-                    </button>
-                  );
-                })}
+            <div className="home-spacer" />
+
+            <div className="home-center">
+              <div className="logo-container">
+                <div className="logo-icon">✨</div>
+                <h1 className="home-logo">
+                  <span className="logo-kachun">Kachun</span>
+                  <span className="logo-quizer">Quizer</span>
+                  <span className="logo-ai">.ai</span>
+                </h1>
               </div>
-            )}
 
-            <p className="screen-sub">Snap or upload a photo of your notes and get quizzed on them</p>
-            <p className="screen-sub-small">✨ Claude is writing your questions</p>
+              <input
+                ref={cameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+              />
+              <input
+                ref={libraryInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+              />
 
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handleFileChange}
-              style={{ display: 'none' }}
-            />
-            <input
-              ref={libraryInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange}
-              style={{ display: 'none' }}
-            />
-
-            {imagePreview ? (
-              <>
-                <div className="photo-preview-wrap">
-                  <img className="photo-preview" src={imagePreview} alt="Your notes" />
-                </div>
-                {errorMsg && <p className="error-text">{errorMsg}</p>}
-                <div className="feedback-actions">
-                  <button className="pill-btn-secondary" onClick={() => libraryInputRef.current?.click()}>
-                    Choose different photo
-                  </button>
-                  <button className="pill-btn-primary" onClick={createDeckFromPhoto}>
-                    Generate quiz →
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                {errorMsg && <p className="error-text">{errorMsg}</p>}
-                <textarea
-                  className="paste-textarea"
-                  placeholder="Paste your notes here…"
-                  value={pastedText}
-                  onChange={(e) => setPastedText(e.target.value)}
-                  rows={6}
-                />
-                <button className="pill-btn-primary" disabled={!pastedText.trim()} onClick={createDeckFromPaste}>
-                  Generate quiz from text →
-                </button>
-
-                <div className="or-divider">or</div>
-
-                <button className="capture-btn" onClick={() => cameraInputRef.current?.click()}>
-                  📷 Take a photo of your notes
-                </button>
-                <button className="pill-btn-secondary pill-btn-full" onClick={() => libraryInputRef.current?.click()}>
-                  🖼 Upload a photo
-                </button>
-              </>
-            )}
-          </>
-        )}
-
-        {view === 'settings' && (
-          <>
-            <button className="back-link" onClick={resetToHome}>
-              ← Back
-            </button>
-            <h2 className="screen-title">Settings</h2>
-            <p className="screen-sub">
-              Quizzes are written by Claude automatically - no setup needed. The API key lives on a small server-side
-              proxy, never in this app or your browser.
-            </p>
-
-            {usageStats.calls > 0 ? (
-              <>
-                <div className="screen-sub-small" style={{ marginTop: 8 }}>
-                  USAGE IN THIS APP
-                </div>
-                <div className="stat-tiles">
-                  <div className="stat-tile">
-                    <div className="stat-number">{usageStats.calls}</div>
-                    <div className="stat-label">Claude calls</div>
+              {imagePreview ? (
+                <>
+                  <div className="photo-preview-wrap">
+                    <img className="photo-preview" src={imagePreview} alt="Your notes" />
                   </div>
-                  <div className="stat-tile">
-                    <div className="stat-number">{(usageStats.inputTokens + usageStats.outputTokens).toLocaleString()}</div>
-                    <div className="stat-label">Total tokens</div>
+                  {errorMsg && <p className="error-text">{errorMsg}</p>}
+                  <div className="feedback-actions">
+                    <button className="pill-btn-secondary" onClick={() => libraryInputRef.current?.click()}>
+                      Choose different photo
+                    </button>
+                    <button className="pill-btn-primary" onClick={createDeckFromPhoto}>
+                      Generate quiz →
+                    </button>
                   </div>
+                </>
+              ) : (
+                <>
+                  {errorMsg && <p className="error-text">{errorMsg}</p>}
+
+                  <div className="main-input-wrap">
+                    <textarea
+                      className="main-textarea"
+                      placeholder="Paste your notes here…"
+                      value={pastedText}
+                      onChange={(e) => setPastedText(e.target.value)}
+                      rows={10}
+                    />
+                    <div className="input-footer">
+                      <div className="input-actions">
+                        <button
+                          className="attach-btn"
+                          onClick={() => cameraInputRef.current?.click()}
+                          title="Take a photo"
+                        >
+                          📷
+                        </button>
+                        <button
+                          className="attach-btn"
+                          onClick={() => libraryInputRef.current?.click()}
+                          title="Upload photo"
+                        >
+                          🖼
+                        </button>
+                      </div>
+                      <button
+                        className="pill-btn-primary"
+                        disabled={!pastedText.trim()}
+                        onClick={createDeckFromPaste}
+                      >
+                        Generate →
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="home-spacer" />
+
+            {decks.length > 0 && (
+              <div className="recent-section">
+                <h3 className="recent-title">Recent quizzes</h3>
+                <div className="deck-list">
+                  {decks.slice(0, 5).map((deck) => {
+                    const stats = deckStats(deck);
+                    return (
+                      <button key={deck.id} className="deck-card-compact" onClick={() => beginSession(deck.id)}>
+                        <div className="deck-card-text">
+                          <span className="deck-card-title">{deck.title}</span>
+                          <span className="deck-card-sub">
+                            {deck.sessionCount === 0
+                              ? `${stats.total} cards`
+                              : `${stats.mastered}/${stats.total} mastered`}
+                          </span>
+                        </div>
+                        <span className="deck-card-delete" onClick={(e) => handleDeleteDeck(deck.id, e)}>
+                          🗑
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
-                <p className="error-text-muted">Every call and its exact token counts are also logged to this browser's console.</p>
-              </>
-            ) : (
-              <p className="screen-sub-small">No Claude calls from this browser yet.</p>
+              </div>
             )}
           </>
         )}
@@ -359,23 +439,47 @@ export default function App() {
 
             {!revealed && (
               <>
-                <input
-                  ref={answerInputRef}
-                  className="answer-input"
-                  type="text"
-                  placeholder="Type your answer…"
-                  value={typedAnswer}
-                  onChange={(e) => setTypedAnswer(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  enterKeyHint="done"
-                />
-                <button className="pill-btn-primary pill-btn-full" disabled={!typedAnswer.trim()} onClick={submitAnswer}>
-                  Check answer →
-                </button>
+                {choiceOptions.length > 0 ? (
+                  <>
+                    <div className="choices-grid">
+                      {choiceOptions.map((option, idx) => (
+                        <button
+                          key={idx}
+                          className="choice-btn"
+                          onClick={() => submitChoice(option)}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+                    <button className="pill-btn-secondary pill-btn-full" onClick={dontKnow}>
+                      I don't know
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <input
+                      ref={answerInputRef}
+                      className="answer-input"
+                      type="text"
+                      placeholder="Type your answer…"
+                      value={typedAnswer}
+                      onChange={(e) => setTypedAnswer(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && submitAnswer()}
+                      autoComplete="off"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      enterKeyHint="done"
+                    />
+                    <button className="pill-btn-primary pill-btn-full" disabled={!typedAnswer.trim()} onClick={submitAnswer}>
+                      Check answer →
+                    </button>
+                    <button className="pill-btn-secondary pill-btn-full" onClick={dontKnow}>
+                      I don't know
+                    </button>
+                  </>
+                )}
               </>
             )}
 
@@ -387,7 +491,12 @@ export default function App() {
                 <div className="answer-card-plain">
                   <div className="answer-equation">{currentQuestion.answer}</div>
                 </div>
-                <p className="explanation-text">{currentQuestion.explanation}</p>
+                {currentQuestion.explanation && (
+                  <div className="explanation-card">
+                    <div className="explanation-label">Why?</div>
+                    <p className="explanation-content">{currentQuestion.explanation}</p>
+                  </div>
+                )}
                 <button className="pill-btn-primary" onClick={nextQuestion}>
                   {questionIndex + 1 >= questions.length ? 'See results' : 'Next question'} →
                 </button>
@@ -412,6 +521,26 @@ export default function App() {
                 </p>
               )}
             </div>
+
+            {Object.keys(conceptPerformance).length > 0 && (
+              <div className="concept-breakdown">
+                <h3 className="concept-breakdown-title">By concept:</h3>
+                {Object.entries(conceptPerformance)
+                  .sort((a, b) => (b[1].correct / b[1].total) - (a[1].correct / a[1].total))
+                  .map(([concept, stats]) => {
+                    const accuracy = Math.round((stats.correct / stats.total) * 100);
+                    return (
+                      <div key={concept} className={`concept-item${accuracy >= 80 ? ' concept-strong' : accuracy >= 50 ? ' concept-medium' : ' concept-weak'}`}>
+                        <div className="concept-name">{concept}</div>
+                        <div className="concept-stats">
+                          <span className="concept-score">{stats.correct}/{stats.total}</span>
+                          <span className="concept-percent">{accuracy}%</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
 
             <div className="review-list">
               {answers.map((a, i) => (

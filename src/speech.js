@@ -22,15 +22,25 @@ function loadVoices() {
 }
 
 // The Web Speech API has no true "ChatGPT-style" neural voice - browsers
-// only expose whatever voices the OS ships, for free. Siri and other
-// Enhanced/Premium system voices sound far more natural than the flat
-// compact defaults, so they're weighted highest.
+// only expose whatever voices the OS ships, for free. Edge's
+// "Online (Natural)" voices are real cloud neural voices (Azure) and
+// sound best by far; macOS Enhanced/Premium voices are next; flat
+// compact/default voices are last.
 const PREFERRED_NAME_HINTS = [
   'siri',
   'google us english',
   'samantha',
   'ava',
+  'allison',
+  'susan',
   'nicky',
+  'zoe',
+  'noelle',
+  'nathan',
+  'evan',
+  'aaron',
+  'isha',
+  'tom',
   'aria',
   'jenny',
   'victoria',
@@ -42,11 +52,13 @@ function scoreVoice(voice) {
   const isEnglish = voice.lang.toLowerCase().startsWith('en');
   let score = 0;
   if (!isEnglish) score -= 10;
-  if (/natural|premium|enhanced|neural/.test(name)) score += 4;
+  if (/online \(natural\)/.test(name)) score += 6;
+  if (/neural/.test(name)) score += 6;
+  if (/premium|enhanced/.test(name)) score += 4;
   if (name.includes('siri')) score += 3;
   if (PREFERRED_NAME_HINTS.some((hint) => name.includes(hint))) score += 2;
   if (voice.localService === false) score += 1;
-  if (/compact/.test(name)) score -= 2;
+  if (/compact/.test(name)) score -= 3;
   return score;
 }
 
@@ -68,6 +80,7 @@ export async function speakResults(correct, total) {
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 0.98;
   utterance.pitch = 1.0;
+  utterance.volume = 1.0;
   const voice = await pickVoice();
   if (voice) utterance.voice = voice;
   window.speechSynthesis.speak(utterance);

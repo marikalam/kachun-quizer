@@ -4,7 +4,7 @@ const POS_CATEGORIES = ['Noun', 'Verb', 'Adjective', 'Adverb'];
 // Lower number = picked first as a blank. Nouns/verbs tend to be the fact
 // being tested; adjectives/adverbs are usually just describing it.
 const CATEGORY_PRIORITY = { Noun: 0, Verb: 1, Adjective: 2, Adverb: 3 };
-const MIN_CARDS = 10;
+const MIN_CARDS = 4;
 
 // Lines that are almost certainly not prose worth quizzing on - photo
 // captions/credits, boilerplate, etc. Pasted articles and screenshots

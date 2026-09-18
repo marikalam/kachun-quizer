@@ -1,6 +1,6 @@
 {
-  "name": "Kachun Quizer",
-  "short_name": "Kachun",
+  "name": "KachunQuizer.ai",
+  "short_name": "Quizer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#f2f4f9",

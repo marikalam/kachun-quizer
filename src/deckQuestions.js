@@ -50,6 +50,7 @@ export function matchesAnswer(typed, correctAnswer) {
   const a = normalize(typed);
   const b = normalize(correctAnswer);
   if (!a) return false;
+  if (a.includes(' ')) return false; // reject multiple words
   if (a === b) return true;
   const tolerance = b.length >= 8 ? 2 : b.length >= 4 ? 1 : 0;
   return editDistance(a, b) <= tolerance;
